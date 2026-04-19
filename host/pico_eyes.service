@@ -1,0 +1,13 @@
+[Unit]
+Description=Pico Eyes companion daemon
+After=graphical-session.target
+
+[Service]
+ExecStart=/usr/bin/python3 /home/sayed/Projects/pico_eyes/host/daemon.py
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target
