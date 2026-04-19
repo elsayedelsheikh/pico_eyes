@@ -3,11 +3,16 @@ import glob
 import time
 import serial
 
-BAUD    = 115200
-TIMEOUT = 2.0
+BAUD            = 115200
+TIMEOUT         = 2.0
+SETTLE_DELAY_S  = 0.5   # give Pico time to settle after USB reset
 
 
 class SerialLink:
+    """USB serial port manager for Pico communication.
+
+    Not thread-safe — must only be called from the main thread.
+    """
 
     def __init__(self):
         self._ser = None
@@ -16,15 +21,17 @@ class SerialLink:
         """Scan /dev/ttyACM*, open the first one, send HELLO + TIME. Returns True on success."""
         ports = glob.glob('/dev/ttyACM*')
         if not ports:
+            print("serial_link: no /dev/ttyACM* port found")
             return False
         try:
             self._ser = serial.Serial(ports[0], BAUD, timeout=TIMEOUT)
-            time.sleep(0.5)          # give Pico time to settle after USB reset
+            time.sleep(SETTLE_DELAY_S)
             t = time.localtime()
             self.send("HELLO")
             self.send("TIME:{:02d}:{:02d}:{:02d}".format(t.tm_hour, t.tm_min, t.tm_sec))
             return True
-        except Exception:
+        except (serial.SerialException, OSError, UnicodeDecodeError) as e:
+            print("serial_link: connect failed:", e)
             self._ser = None
             return False
 
@@ -47,7 +54,8 @@ class SerialLink:
             self._ser.write((cmd + '\n').encode())
             self._ser.flush()
             return self._ser.readline().decode().strip()
-        except Exception:
+        except (serial.SerialException, OSError, UnicodeDecodeError) as e:
+            print("serial_link: send failed ({!r}):".format(cmd), e)
             self._ser = None
             return ''
 
