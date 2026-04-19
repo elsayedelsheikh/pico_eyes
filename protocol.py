@@ -22,6 +22,7 @@ FACE          = "FACE"
 MSG           = "MSG"
 BRIGHTNESS    = "BRIGHTNESS"
 RESET_BREAK   = "RESET_BREAK"
+TEMP          = "TEMP"
 
 # ── Valid face names ───────────────────────────────────────────
 FACES = {

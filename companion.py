@@ -109,6 +109,16 @@ class CompanionMode:
             except Exception:
                 return protocol.ack(cmd, payload, status="ERR")
 
+        elif cmd == protocol.TEMP:
+            try:
+                from machine import ADC
+                sensor = ADC(4)
+                reading = sensor.read_u16() * 3.3 / 65535
+                celsius = 27 - (reading - 0.706) / 0.001721
+                return protocol.ack(cmd, "{:.1f}".format(celsius))
+            except Exception:
+                return protocol.ack(cmd, status="ERR")
+
         else:
             return protocol.nack(cmd)
 
