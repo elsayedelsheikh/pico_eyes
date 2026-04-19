@@ -22,7 +22,7 @@ def upload(files: list) -> int:
     try:
         s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         s.connect(SOCK_PATH)
-        s.sendall(b"UPLOAD")
+        s.sendall(b"UPLOAD\n")
         resp = s.recv(16)
         s.close()
         if resp.strip() != b"OK":
