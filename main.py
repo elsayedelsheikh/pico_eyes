@@ -79,6 +79,7 @@ def _wait_for_hello(timeout_ms):
         if line:
             cmd, payload = protocol.parse(line)
             if cmd in (protocol.HELLO, protocol.HEARTBEAT):
+                print(protocol.ack(cmd))
                 return True, time_msg
             if cmd == protocol.TIME:
                 time_msg = payload

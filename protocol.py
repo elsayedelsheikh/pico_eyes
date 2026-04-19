@@ -27,7 +27,7 @@ TEMP          = "TEMP"
 # ── Valid face names ───────────────────────────────────────────
 FACES = {
     "default", "happy", "tired", "angry",
-    "curious", "scary", "frozen", "excited",
+    "curious", "focused", "scary", "frozen", "excited",
 }
 
 

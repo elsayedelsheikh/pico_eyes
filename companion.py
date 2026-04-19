@@ -15,6 +15,15 @@ TYPEWRITER_MS    = 55      # ms between each revealed character (~18 chars/s)
 BREAK_MSG        = "Hey. Stand up. 5 min walk."
 WAKE_SETTLE_MS   = 600
 
+# Default eye geometry (must match __init__ calls below)
+_EYE_W        = 80
+_EYE_H        = 70
+_EYE_RADIUS   = 14
+
+# Focused face: circular eyes, slower blink — visually distinct from default
+_FOCUSED_SIZE   = 65
+_FOCUSED_RADIUS = 32   # half of 65 → near-perfect circle
+
 # Text band geometry (bottom of 240x240 screen)
 BAND_Y  = 176              # y where the dark band starts
 BAND_H  = 64               # band height in pixels
@@ -28,9 +37,10 @@ FACE_MAP = {
     "tired":    TIRED,
     "angry":    ANGRY,
     "curious":  CURIOUS,
+    "focused":  DEFAULT,  # handled specially in _set_face (circular eyes)
     "scary":    SCARY,
     "frozen":   FROZEN,
-    "excited":  HAPPY,   # handled specially in _set_face (idle mode on)
+    "excited":  HAPPY,    # handled specially in _set_face (idle mode on)
 }
 
 # ── Colours ───────────────────────────────────────────────────
@@ -196,13 +206,32 @@ class CompanionMode:
         self._showing_msg  = True
 
     def _set_face(self, name):
+        # Always restore default eye geometry first (in case we came from focused)
+        self.robo.eyes_width(_EYE_W, _EYE_W)
+        self.robo.eyes_height(_EYE_H, _EYE_H)
+        self.robo.eyes_radius(_EYE_RADIUS, _EYE_RADIUS)
+        self.robo.set_auto_blinker(ON, 3, 2)
+
         if name == "excited":
-            # Special: HAPPY + fast idle so eyes dart around
             self.robo.set_idle_mode(ON, 3, 1)
             self.robo.set_mood(HAPPY)
             self._current_mood = HAPPY
+        elif name == "curious":
+            # Idle wandering makes eyes drift to edges — that's when the outer
+            # eye enlarges and the curious effect is actually visible
+            self.robo.set_idle_mode(ON, 1, 2)
+            self.robo.set_mood(CURIOUS)
+            self._current_mood = CURIOUS
+        elif name == "focused":
+            # Circular eyes + slow blink = visually distinct "locked-in" look
+            self.robo.set_idle_mode(OFF)
+            self.robo.eyes_width(_FOCUSED_SIZE, _FOCUSED_SIZE)
+            self.robo.eyes_height(_FOCUSED_SIZE, _FOCUSED_SIZE)
+            self.robo.eyes_radius(_FOCUSED_RADIUS, _FOCUSED_RADIUS)
+            self.robo.set_auto_blinker(ON, 6, 3)  # blink less when focused
+            self.robo.set_mood(DEFAULT)
+            self._current_mood = DEFAULT
         else:
-            # Any other face: stop idle darting first
             self.robo.set_idle_mode(OFF)
             mood = FACE_MAP.get(name, DEFAULT)
             self._current_mood = mood

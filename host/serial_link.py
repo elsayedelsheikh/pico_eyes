@@ -26,8 +26,12 @@ class SerialLink:
         try:
             self._ser = serial.Serial(ports[0], BAUD, timeout=TIMEOUT)
             time.sleep(SETTLE_DELAY_S)
-            t = time.localtime()
             self.send("HELLO")
+            # Second HELLO needed when Pico was in bedside mode: the first one
+            # wakes it to _wait_for_hello, the second actually enters companion.
+            time.sleep(0.4)
+            self.send("HELLO")
+            t = time.localtime()
             self.send("TIME:{:02d}:{:02d}:{:02d}".format(t.tm_hour, t.tm_min, t.tm_sec))
             return True
         except (serial.SerialException, OSError, UnicodeDecodeError) as e:

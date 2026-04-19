@@ -89,12 +89,14 @@ def run() -> None:
                 ack = link.send("TEMP")
                 # ACK format: ACK:TEMP:23.4:OK
                 parts = ack.split(":")
-                if len(parts) >= 3:
+                if len(parts) >= 3 and parts[-1].strip() == "OK":
                     try:
                         for cmd in sm.on_temp(float(parts[2])):
                             link.send(cmd)
                     except ValueError:
-                        pass
+                        print("pico_eyes host: could not parse TEMP ack:", ack)
+                else:
+                    print("pico_eyes host: TEMP read failed:", ack)
 
             elif isinstance(event, TickEvent):
                 tick_count += 1

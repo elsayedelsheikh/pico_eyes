@@ -52,17 +52,17 @@ def test_tick_before_5min_does_not_idle():
 def test_low_keystroke_count_sends_default_face():
     sm = _sm()
     sm._keystroke_times = [NOW] * 5        # 5 keystrokes — below 20 threshold
-    sm._last_face = "curious"               # force a face change
+    sm._last_face = "focused"               # force a face change
     cmds = sm.on_tick(NOW)
     assert "FACE:default" in cmds
 
 
-def test_medium_keystroke_count_sends_curious_face():
+def test_medium_keystroke_count_sends_focused_face():
     sm = _sm()
     sm._keystroke_times = [NOW] * 50       # 50 keystrokes — 21–80 range
     sm._last_face = "default"
     cmds = sm.on_tick(NOW)
-    assert "FACE:curious" in cmds
+    assert "FACE:focused" in cmds
 
 
 def test_high_keystroke_count_sends_excited_face():
@@ -83,19 +83,19 @@ def test_face_not_resent_if_unchanged():
 
 def test_git_push_sends_excited_and_records_restore_face():
     sm = _sm()
-    sm._last_face = "curious"
+    sm._last_face = "focused"
     cmds = sm.on_git_push(NOW)
     assert "FACE:excited" in cmds
-    assert sm._pre_git_face == "curious"
+    assert sm._pre_git_face == "focused"
 
 
 def test_git_excited_restores_face_after_timeout():
     sm = _sm()
-    sm._last_face = "curious"
+    sm._last_face = "focused"
     sm.on_git_push(NOW)
     # advance time past the 8s git hold
     cmds = sm.on_tick(NOW + 9)
-    assert "FACE:curious" in cmds
+    assert "FACE:focused" in cmds
     assert sm._git_excited_until == 0
 
 

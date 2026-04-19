@@ -8,7 +8,7 @@ IDLE_AFTER_S  = 5 * 60
 # (threshold, face_name) — first threshold the count exceeds wins
 _INTENSITY = [
     (80, "excited"),
-    (20, "curious"),
+    (20, "focused"),
     (0,  "default"),
 ]
 
@@ -36,6 +36,7 @@ class StateMachine:
         cmds = []
         if self.state == State.IDLE:
             self.state = State.ACTIVE
+            print("pico_eyes: IDLE → ACTIVE  (resetting break timer)")
             cmds.append("RESET_BREAK")
         self._last_activity = ts
         self._keystroke_times.append(ts)
@@ -44,23 +45,26 @@ class StateMachine:
         return cmds
 
     def on_git_push(self, now: float) -> list:
+        print("pico_eyes: git push → FACE:excited for {}s".format(GIT_EXCITED_S))
         self._pre_git_face      = self._last_face
         self._git_excited_until = now + GIT_EXCITED_S
         self._last_face         = "excited"
         return ["FACE:excited"]
 
     def on_upload_completed(self, now: float) -> list:
-        """Called after a code upload reconnect — shows excited face briefly."""
+        print("pico_eyes: upload done → FACE:excited for 5s")
         self._pre_git_face      = self._last_face
-        self._git_excited_until = now + 5   # shorter than git push (8s) — distinguishes upload from push
+        self._git_excited_until = now + 5
         self._last_face         = "excited"
         return ["FACE:excited"]
 
     def on_weather(self, text: str) -> list:
+        print("pico_eyes: weather update →", text)
         self._last_weather = text
         return self._maybe_combined()
 
     def on_temp(self, celsius: float) -> list:
+        print("pico_eyes: pico temp → {:.1f}°C".format(celsius))
         self._last_temp = celsius
         return self._maybe_combined()
 
@@ -73,13 +77,15 @@ class StateMachine:
                 self._git_excited_until = 0.0
                 face = self._pre_git_face
                 self._last_face = face
+                print("pico_eyes: git-excited ended → restoring FACE:{}".format(face))
                 cmds.append("FACE:{}".format(face))
-            return cmds     # suppress other face changes while git-excited
+            return cmds
 
         # idle transition
         if self.state == State.ACTIVE and (now - self._last_activity) >= IDLE_AFTER_S:
             self.state = State.IDLE
             self._last_face = "tired"
+            print("pico_eyes: ACTIVE → IDLE  (no activity for 5 min) → FACE:tired")
             cmds.append("FACE:tired")
             return cmds
 
@@ -93,6 +99,7 @@ class StateMachine:
                     break
             if face != self._last_face:
                 self._last_face = face
+                print("pico_eyes: FACE:{} ({} keys/min)".format(face, count))
                 cmds.append("FACE:{}".format(face))
 
         return cmds
