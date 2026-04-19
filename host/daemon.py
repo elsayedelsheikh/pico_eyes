@@ -74,11 +74,8 @@ def run() -> None:
             while not link.connect():
                 time.sleep(3)
             print("pico_eyes host: reconnected after upload")
-            # show excited face for 5 s then restore
-            link.send("FACE:excited")
-            sm._git_excited_until = time.time() + 5
-            sm._pre_git_face      = sm._last_face
-            sm._last_face         = "excited"
+            for cmd in sm.on_upload_completed(time.time()):
+                link.send(cmd)
 
         elif isinstance(event, WeatherUpdateEvent):
             for cmd in sm.on_weather(event.text):

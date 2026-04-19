@@ -49,6 +49,13 @@ class StateMachine:
         self._last_face         = "excited"
         return ["FACE:excited"]
 
+    def on_upload_completed(self, now: float) -> list:
+        """Called after a code upload reconnect — shows excited face briefly."""
+        self._pre_git_face      = self._last_face
+        self._git_excited_until = now + 5   # shorter than git push (8s) — distinguishes upload from push
+        self._last_face         = "excited"
+        return ["FACE:excited"]
+
     def on_weather(self, text: str) -> list:
         self._last_weather = text
         return self._maybe_combined()
