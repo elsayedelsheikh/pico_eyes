@@ -35,7 +35,9 @@ def start(q: _queue.Queue) -> None:
             text = _fetch()
             if text:
                 q.put(WeatherUpdateEvent(text=text))
-            time.sleep(INTERVAL_S)
+                time.sleep(INTERVAL_S)
+            else:
+                time.sleep(300)   # retry after 5 min on failure
 
     t = threading.Thread(target=loop, daemon=True)
     t.start()

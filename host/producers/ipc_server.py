@@ -19,20 +19,23 @@ def start(q: _queue.Queue) -> None:
         srv.bind(SOCK_PATH)
         srv.listen(1)
         while True:
-            conn, _ = srv.accept()
             try:
-                data = conn.recv(256).decode().strip()
-                if data.startswith("PUSH:"):
-                    branch = data[5:]
-                    q.put(GitPushEvent(branch=branch))
+                conn, _ = srv.accept()
+                try:
+                    data = conn.recv(256).decode().strip()
+                    if data.startswith("PUSH:"):
+                        branch = data[5:]
+                        q.put(GitPushEvent(branch=branch))
+                        conn.close()
+                    elif data == "UPLOAD":
+                        # keep conn open — main thread writes "OK\n" after releasing serial
+                        q.put(UploadRequestEvent(conn=conn))
+                    else:
+                        conn.close()
+                except Exception:
                     conn.close()
-                elif data == "UPLOAD":
-                    # keep conn open — main thread writes "OK\n" after releasing serial
-                    q.put(UploadRequestEvent(conn=conn))
-                else:
-                    conn.close()
-            except Exception:
-                conn.close()
+            except Exception as e:
+                print("ipc_server: accept error:", e)
 
     t = threading.Thread(target=loop, daemon=True)
     t.start()

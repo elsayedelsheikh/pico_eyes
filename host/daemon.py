@@ -34,7 +34,10 @@ def run() -> None:
     link = SerialLink()
     sm   = StateMachine()
 
-    kb_prod.start(q)
+    try:
+        kb_prod.start(q)
+    except Exception as e:
+        print("pico_eyes host: keyboard/mouse monitoring unavailable:", e)
     wx_prod.start(q)
     ipc_prod.start(q)
     tmp_prod.start(q)
@@ -54,51 +57,54 @@ def run() -> None:
             link.ensure_connected()
             continue
 
-        if isinstance(event, (KeystrokeEvent, MouseMoveEvent)):
-            for cmd in sm.on_activity(event.timestamp):
-                link.send(cmd)
+        try:
+            if isinstance(event, (KeystrokeEvent, MouseMoveEvent)):
+                for cmd in sm.on_activity(event.timestamp):
+                    link.send(cmd)
 
-        elif isinstance(event, GitPushEvent):
-            for cmd in sm.on_git_push(time.time()):
-                link.send(cmd)
+            elif isinstance(event, GitPushEvent):
+                for cmd in sm.on_git_push(time.time()):
+                    link.send(cmd)
 
-        elif isinstance(event, UploadRequestEvent):
-            link.disconnect()
-            try:
-                event.conn.sendall(b"OK\n")
-            except Exception:
-                pass
-            event.conn.close()
-            print("pico_eyes host: port released for upload, reconnecting...")
-            time.sleep(3)
-            while not link.connect():
-                time.sleep(3)
-            print("pico_eyes host: reconnected after upload")
-            for cmd in sm.on_upload_completed(time.time()):
-                link.send(cmd)
-
-        elif isinstance(event, WeatherUpdateEvent):
-            for cmd in sm.on_weather(event.text):
-                link.send(cmd)
-
-        elif isinstance(event, TempRequestEvent):
-            ack = link.send("TEMP")
-            # ACK format: ACK:TEMP:23.4:OK
-            parts = ack.split(":")
-            if len(parts) >= 3:
+            elif isinstance(event, UploadRequestEvent):
+                link.disconnect()
                 try:
-                    for cmd in sm.on_temp(float(parts[2])):
-                        link.send(cmd)
-                except ValueError:
+                    event.conn.sendall(b"OK\n")
+                except Exception:
                     pass
+                event.conn.close()
+                print("pico_eyes host: port released for upload, reconnecting...")
+                time.sleep(3)
+                while not link.connect():
+                    time.sleep(3)
+                print("pico_eyes host: reconnected after upload")
+                for cmd in sm.on_upload_completed(time.time()):
+                    link.send(cmd)
 
-        elif isinstance(event, TickEvent):
-            tick_count += 1
-            if tick_count % HB_EVERY_TICKS == 0:
-                if not link.send("HB"):
-                    link.ensure_connected()
-            for cmd in sm.on_tick(time.time()):
-                link.send(cmd)
+            elif isinstance(event, WeatherUpdateEvent):
+                for cmd in sm.on_weather(event.text):
+                    link.send(cmd)
+
+            elif isinstance(event, TempRequestEvent):
+                ack = link.send("TEMP")
+                # ACK format: ACK:TEMP:23.4:OK
+                parts = ack.split(":")
+                if len(parts) >= 3:
+                    try:
+                        for cmd in sm.on_temp(float(parts[2])):
+                            link.send(cmd)
+                    except ValueError:
+                        pass
+
+            elif isinstance(event, TickEvent):
+                tick_count += 1
+                if tick_count % HB_EVERY_TICKS == 0:
+                    if not link.send("HB"):
+                        link.ensure_connected()
+                for cmd in sm.on_tick(time.time()):
+                    link.send(cmd)
+        except Exception as e:
+            print("pico_eyes host: event dispatch error:", e)
 
 
 if __name__ == "__main__":
