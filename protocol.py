@@ -65,3 +65,24 @@ def parse_time(payload):
     except Exception:
         pass
     return None
+
+# ── ACK / NACK helpers ────────────────────────────────────────
+# Pico prints these back over serial so the PC script can confirm
+# every command was received and whether it was understood.
+#
+# Statuses:
+#   OK       — recognised and applied
+#   UNKNOWN  — command or value not recognised
+#   ERR      — recognised command but value was invalid
+
+
+def ack(cmd, detail=None, status="OK"):
+    """Return an ACK line to print() back to the PC."""
+    if detail is not None:
+        return "ACK:{}:{}:{}".format(cmd, detail, status)
+    return "ACK:{}:{}".format(cmd, status)
+
+
+def nack(cmd, status="UNKNOWN"):
+    """Return a NACK line for unrecognised commands."""
+    return "NACK:{}:{}".format(cmd, status)

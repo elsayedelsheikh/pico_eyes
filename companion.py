@@ -1,28 +1,27 @@
 # companion.py — dev companion mode
-#
-# Drives RoboEyes expressions based on messages from the PC script.
-# Also shows brief text overlays for notifications and break reminders.
-#
-# Supported protocol commands:
-#   FACE:<name>      → change expression (see FACE_MAP below)
-#   MSG:<text>       → text overlay for MSG_SHOW_MS, then eyes return
-#   BRIGHTNESS:<pct> → set backlight 0-100 %
-#   RESET_BREAK      → reset the 30-min break timer
 
 from machine import PWM, Pin
 from roboeyes import RoboEyes, ON, OFF
 from roboeyes import DEFAULT, TIRED, ANGRY, HAPPY, FROZEN, SCARY, CURIOUS
 import time
+import framebuf as _framebuf
 
 import protocol
 from health import HealthTimer
 
 # ── Config ────────────────────────────────────────────────────
-MSG_SHOW_MS      = 5_000   # how long a text overlay stays on screen
+MSG_HOLD_MS      = 3_000   # pause after full typewriter reveal before clearing
+TYPEWRITER_MS    = 55      # ms between each revealed character (~18 chars/s)
 BREAK_MSG        = "Hey. Stand up. 5 min walk."
-WAKE_SETTLE_MS   = 600     # ms to let RoboEyes tweens reach target
+WAKE_SETTLE_MS   = 600
 
-# ── Face name → RoboEyes mood constant ───────────────────────
+# Text band geometry (bottom of 240x240 screen)
+BAND_Y  = 176              # y where the dark band starts
+BAND_H  = 64               # band height in pixels
+SCALE   = 2                # font scale (8x8 → 16x16)
+MAX_VIS = 240 // (8 * SCALE)  # max visible chars at this scale (= 15)
+
+# ── Face map ──────────────────────────────────────────────────
 FACE_MAP = {
     "default":  DEFAULT,
     "happy":    HAPPY,
@@ -33,29 +32,36 @@ FACE_MAP = {
     "frozen":   FROZEN,
 }
 
-# ── Colours (RGB565 standard, adapter handles byte-swap) ──────
-_WHITE = 0xFFFF
-_BLACK = 0x0000
+# ── Colours ───────────────────────────────────────────────────
+_WHITE     = 0xFFFF
+_BLACK     = 0x0000
+_BAND_BG   = 0x0841   # very dark grey band behind the text
 
 
 class CompanionMode:
-    """
-    Initialise RoboEyes, play a wake-up animation, then handle messages.
-    Call handle(cmd, payload) for each parsed serial message.
-    Call update() every loop iteration.
-    """
 
     def __init__(self, lcd, bl_pin=6):
-        self.lcd    = lcd
-        self._pwm   = PWM(Pin(bl_pin))
+        self.lcd  = lcd
+        self._pwm = PWM(Pin(bl_pin))
         self._pwm.freq(1000)
-        self._pwm.duty_u16(65535)   # full brightness on wake-up
+        self._pwm.duty_u16(65535)
 
-        # ── RoboEyes setup ────────────────────────────────────
+        # ── Message state (must exist before RoboEyes init, ──────
+        # because RoboEyes calls on_show() during its own __init__)
+        self._msg_full     = ""
+        self._msg_reveal   = 0
+        self._msg_scroll   = 0
+        self._next_char_t  = 0
+        self._msg_hold_end = 0
+        self._showing_msg  = False
+        self._health       = HealthTimer()
+        self._current_mood = DEFAULT
+
+        # ── RoboEyes ─────────────────────────────────────────
         self.robo = RoboEyes(
             lcd, 240, 240,
             frame_rate=20,
-            on_show=lambda r: lcd.show(),
+            on_show=self._on_show,
         )
         self.robo.eyes_width(80, 80)
         self.robo.eyes_height(70, 70)
@@ -64,101 +70,176 @@ class CompanionMode:
         self.robo.set_idle_mode(OFF)
 
         # ── Wake-up animation ─────────────────────────────────
-        # Start tired/half-closed, let size tween finish, then centre
         self.robo.set_mood(TIRED)
         self._settle(WAKE_SETTLE_MS)
         self.robo.set_position(DEFAULT)
         self._settle(WAKE_SETTLE_MS)
-        # Open eyes fully
         self.robo.set_mood(DEFAULT)
-
-        # ── Internal state ────────────────────────────────────
-        self._health      = HealthTimer()
-        self._msg_until   = 0          # ticks_ms deadline for current overlay
-        self._showing_msg = False
-        self._current_mood = DEFAULT
 
     # ── Public API ────────────────────────────────────────────
 
     def handle(self, cmd, payload):
-        """Dispatch a parsed protocol command."""
+        """
+        Dispatch command and return an ACK/NACK string for the PC.
+        The caller (main.py) is responsible for print()ing it.
+        """
         if cmd == protocol.FACE:
-            self._set_face(payload or "default")
+            name = (payload or "default").lower()
+            if name in FACE_MAP:
+                self._set_face(name)
+                return protocol.ack(cmd, name)
+            else:
+                # Unknown face name — fall back to default
+                self._set_face("default")
+                return protocol.ack(cmd, name, status="UNKNOWN")
 
         elif cmd == protocol.MSG:
-            self._show_message(payload or "")
+            self._start_message(payload or "")
+            return protocol.ack(cmd)
 
         elif cmd == protocol.RESET_BREAK:
             self._health.reset()
+            return protocol.ack(cmd)
 
         elif cmd == protocol.BRIGHTNESS:
             try:
                 pct = int(payload)
                 self._pwm.duty_u16(int(65535 * max(0, min(100, pct)) / 100))
+                return protocol.ack(cmd, payload)
             except Exception:
-                pass
+                return protocol.ack(cmd, payload, status="ERR")
+
+        else:
+            return protocol.nack(cmd)
 
     def update(self):
-        """Call every loop iteration."""
-        # ── End of message overlay? ───────────────────────────
+        now = time.ticks_ms()
+
+        # ── Typewriter advance ────────────────────────────────
         if self._showing_msg:
-            if time.ticks_diff(time.ticks_ms(), self._msg_until) >= 0:
-                self._showing_msg = False
-                # Restore eyes with last known mood
-                self.robo.set_mood(self._current_mood)
+            full_len = len(self._msg_full)
 
-        # ── Break reminder due? ───────────────────────────────
+            if self._msg_reveal < full_len:
+                # Still revealing characters
+                if time.ticks_diff(now, self._next_char_t) >= 0:
+                    self._msg_reveal += 1
+                    self._next_char_t = now + TYPEWRITER_MS
+                    # Scroll window if text wider than band
+                    if self._msg_reveal > MAX_VIS:
+                        self._msg_scroll = self._msg_reveal - MAX_VIS
+            else:
+                # All revealed — count down hold timer
+                if self._msg_hold_end == 0:
+                    self._msg_hold_end = now + MSG_HOLD_MS
+                elif time.ticks_diff(now, self._msg_hold_end) >= 0:
+                    self._showing_msg  = False
+                    self._msg_hold_end = 0
+                    self.robo.set_mood(self._current_mood)
+
+        # ── Health timer ──────────────────────────────────────
         if self._health.due:
-            self._show_message(BREAK_MSG)
+            self._start_message(BREAK_MSG)
 
-        # ── Tick RoboEyes (only when eyes are visible) ────────
-        if not self._showing_msg:
-            self.robo.update()
+        # ── Eyes (always running) ─────────────────────────────
+        # _on_show() stamps the text overlay after each render
+        self.robo.update()
+
+    def deinit(self):
+        self._pwm.deinit()
 
     # ── Private helpers ───────────────────────────────────────
 
-    def deinit(self):
-        """Release PWM so bedside mode can take over pin 6."""
-        self._pwm.deinit()
+    def _on_show(self, robo):
+        """Called by RoboEyes after every frame. Stamp overlay then blit."""
+        if self._showing_msg:
+            self._stamp_overlay()
+        self.lcd.show()
+
+    def _stamp_overlay(self):
+        """Draw the text band over the already-rendered eyes frame."""
+        lcd = self.lcd
+
+        # Dark band
+        lcd.fill_rect(0, BAND_Y, 240, BAND_H, _BAND_BG)
+
+        # Visible slice of the text
+        start  = self._msg_scroll
+        end    = min(start + MAX_VIS, self._msg_reveal)
+        visible = self._msg_full[start:end]
+
+        if visible:
+            text_w = len(visible) * 8 * SCALE
+            x = (240 - text_w) // 2
+            y = BAND_Y + (BAND_H - 8 * SCALE) // 2
+            _draw_text(lcd, visible, x, y, _WHITE, scale=SCALE)
+
+        # Blinking cursor while still revealing
+        if self._msg_reveal < len(self._msg_full):
+            cx = (240 + len(visible) * 8 * SCALE) // 2
+            if (time.ticks_ms() // 250) % 2 == 0:   # blink at 2 Hz
+                lcd.fill_rect(cx + 2, BAND_Y + (BAND_H - 8 * SCALE) // 2,
+                              SCALE, 8 * SCALE, _WHITE)
+
+    def _start_message(self, text):
+        self._msg_full     = text
+        self._msg_reveal   = 0
+        self._msg_scroll   = 0
+        self._msg_hold_end = 0
+        self._next_char_t  = time.ticks_ms() + TYPEWRITER_MS
+        self._showing_msg  = True
 
     def _set_face(self, name):
         mood = FACE_MAP.get(name.lower(), DEFAULT)
         self._current_mood = mood
-        if not self._showing_msg:
-            self.robo.set_mood(mood)
-
-    def _show_message(self, text):
-        """Clear screen, render wrapped text, set expiry timer."""
-        self.lcd.fill(_BLACK)
-
-        lines    = _wrap(text, max_chars=26)   # 26 × 8px ≈ 208px wide
-        line_h   = 14                          # px per line (8px font + leading)
-        total_h  = len(lines) * line_h
-        y        = max(0, (240 - total_h) // 2)
-
-        for line in lines:
-            x = max(0, (240 - len(line) * 8) // 2)
-            self.lcd.text(line, x, y, _WHITE)
-            y += line_h
-
-        self.lcd.show()
-        self._msg_until   = time.ticks_ms() + MSG_SHOW_MS
-        self._showing_msg = True
+        self.robo.set_mood(mood)
 
     def _settle(self, ms):
-        """Run the RoboEyes update loop for `ms` milliseconds."""
         t0 = time.ticks_ms()
         while time.ticks_diff(time.ticks_ms(), t0) < ms:
             self.robo.update()
 
 
-# ── Utility ───────────────────────────────────────────────────
+# ── Text rendering ────────────────────────────────────────────
+
+def _draw_text(lcd, text, x, y, color, scale=1):
+    """
+    Render text via a temporary MONO FrameBuffer (MicroPython built-in 8x8
+    font), then blit each run of lit pixels with fill_rect at given scale.
+    """
+    w = len(text) * 8
+    if w == 0:
+        return
+    buf = bytearray((w * 8 + 7) // 8)
+    tmp = _framebuf.FrameBuffer(buf, w, 8, _framebuf.MONO_HLSB)
+    tmp.fill(0)
+    tmp.text(text, 0, 0, 1)
+    for row in range(8):
+        col = 0
+        while col < w:
+            bit_pos = row * w + col
+            if buf[bit_pos >> 3] & (0x80 >> (bit_pos & 7)):
+                run = col + 1
+                while run < w:
+                    bp = row * w + run
+                    if buf[bp >> 3] & (0x80 >> (bp & 7)):
+                        run += 1
+                    else:
+                        break
+                lcd.fill_rect(
+                    x + col * scale,
+                    y + row * scale,
+                    (run - col) * scale,
+                    scale,
+                    color,
+                )
+                col = run
+            else:
+                col += 1
+
+
+# ── Word wrap (used externally if needed) ─────────────────────
 
 def _wrap(text, max_chars):
-    """
-    Word-wrap `text` to lines of at most `max_chars` characters.
-    Returns a list of strings (never empty).
-    """
     words = text.split()
     if not words:
         return [""]
