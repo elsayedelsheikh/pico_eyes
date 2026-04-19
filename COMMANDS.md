@@ -43,22 +43,24 @@ script can confirm delivery and validity.
 | Command | Example | ACK response | Description |
 |---------|---------|--------------|-------------|
 | `FACE:<name>` | `FACE:happy` | `ACK:FACE:happy:OK` | Change the RoboEyes expression. Unknown name → `UNKNOWN` status, falls back to `default`. |
-| `MSG:<text>`  | `MSG:Update your Jira ticket` | `ACK:MSG:OK` | Shows a typewriter-animated text overlay at the bottom of the screen. Eyes stay alive above it. Text scrolls if longer than 15 chars. Clears automatically after a 3 s hold. |
+| `MSG:<text>`  | `MSG:Update your Jira ticket` | `ACK:MSG:OK` | Shows a typewriter-animated text overlay directly over the eyes (no background). Eyes stay alive. Text scrolls if longer than 15 chars. Clears automatically after a 3 s hold. |
 | `BRIGHTNESS:<0-100>` | `BRIGHTNESS:40` | `ACK:BRIGHTNESS:40:OK` | Set backlight brightness as a percentage. Non-integer value → `ERR`. |
 
 ### Face names
 
-| Name      | ACK detail | Expression |
-|-----------|------------|------------|
-| `default` | `default`  | Neutral, relaxed |
-| `happy`   | `happy`    | Wide, upbeat |
-| `tired`   | `tired`    | Half-closed, droopy |
-| `angry`   | `angry`    | Furrowed, intense |
-| `curious` | `curious`  | Tilted, interested |
-| `scary`   | `scary`    | Wide, unsettling |
-| `frozen`  | `frozen`   | Locked open, unblinking |
+| Name       | ACK detail  | Expression |
+|------------|-------------|------------|
+| `default`  | `default`   | Neutral, relaxed |
+| `happy`    | `happy`     | Wide, upbeat |
+| `tired`    | `tired`     | Half-closed, droopy |
+| `angry`    | `angry`     | Furrowed, intense |
+| `curious`  | `curious`   | Tilted, interested |
+| `scary`    | `scary`     | Wide, unsettling |
+| `frozen`   | `frozen`    | Locked open, unblinking |
+| `excited`  | `excited`   | Wide happy eyes + eyes dart around rapidly (idle mode on) |
 
 Any other name → `ACK:FACE:<name>:UNKNOWN`, falls back to `default`.
+Setting any face other than `excited` stops the darting and returns to calm gaze.
 
 ---
 
@@ -95,6 +97,7 @@ TIME:09:00:00                → ACK:TIME:09:00:00:OK
 FACE:happy                   → ACK:FACE:happy:OK
 FACE:tired                   → ACK:FACE:tired:OK
 FACE:angry                   → ACK:FACE:angry:OK
+FACE:excited                 → ACK:FACE:excited:OK
 FACE:blorp                   → ACK:FACE:blorp:UNKNOWN
 MSG:PR approved nice work    → ACK:MSG:OK
 MSG:Hey stand up take a walk → ACK:MSG:OK

@@ -30,12 +30,12 @@ FACE_MAP = {
     "curious":  CURIOUS,
     "scary":    SCARY,
     "frozen":   FROZEN,
+    "excited":  HAPPY,   # handled specially in _set_face (idle mode on)
 }
 
 # ── Colours ───────────────────────────────────────────────────
 _WHITE     = 0xFFFF
 _BLACK     = 0x0000
-_BAND_BG   = 0x0841   # very dark grey band behind the text
 
 
 class CompanionMode:
@@ -156,11 +156,8 @@ class CompanionMode:
         self.lcd.show()
 
     def _stamp_overlay(self):
-        """Draw the text band over the already-rendered eyes frame."""
+        """Stamp text directly over the already-rendered eyes frame (no background)."""
         lcd = self.lcd
-
-        # Dark band
-        lcd.fill_rect(0, BAND_Y, 240, BAND_H, _BAND_BG)
 
         # Visible slice of the text
         start  = self._msg_scroll
@@ -189,9 +186,17 @@ class CompanionMode:
         self._showing_msg  = True
 
     def _set_face(self, name):
-        mood = FACE_MAP.get(name.lower(), DEFAULT)
-        self._current_mood = mood
-        self.robo.set_mood(mood)
+        if name == "excited":
+            # Special: HAPPY + fast idle so eyes dart around
+            self.robo.set_idle_mode(ON, 3, 1)
+            self.robo.set_mood(HAPPY)
+            self._current_mood = HAPPY
+        else:
+            # Any other face: stop idle darting first
+            self.robo.set_idle_mode(OFF)
+            mood = FACE_MAP.get(name, DEFAULT)
+            self._current_mood = mood
+            self.robo.set_mood(mood)
 
     def _settle(self, ms):
         t0 = time.ticks_ms()

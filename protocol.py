@@ -26,7 +26,7 @@ RESET_BREAK   = "RESET_BREAK"
 # ── Valid face names ───────────────────────────────────────────
 FACES = {
     "default", "happy", "tired", "angry",
-    "curious", "scary", "frozen",
+    "curious", "scary", "frozen", "excited",
 }
 
 
