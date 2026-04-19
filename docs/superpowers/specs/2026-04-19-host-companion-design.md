@@ -87,7 +87,7 @@ IDLE     — no activity for ≥ 5 minutes
 **State transitions:**
 
 ```
-ACTIVE  + no events for 5 min    → IDLE   → FACE:tired
+ACTIVE  + no events for 5 min    → IDLE   → FACE:tired  (yawning/bored look)
 IDLE    + KeystrokeEvent         → ACTIVE + send RESET_BREAK
 ACTIVE/IDLE + GitPushEvent       → send FACE:excited, hold 8 s, restore face
 ```
@@ -207,6 +207,20 @@ The `|| true` ensures git push never fails if the daemon isn't running.
 | `requests` | wttr.in HTTP call |
 
 Install: `pip install pyserial pynput requests`
+
+---
+
+## Development workflow (mpremote)
+
+`mpremote` is used only during development to upload code to the Pico. It takes over the serial port, so the daemon must not be running at the same time:
+
+```sh
+systemctl --user stop pico_eyes
+mpremote cp main.py :
+systemctl --user start pico_eyes
+```
+
+No daemon integration needed — this is a dev-time operation only.
 
 ---
 
