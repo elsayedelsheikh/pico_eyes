@@ -47,8 +47,9 @@ host/
 ├── producers/
 │   ├── keyboard.py       # pynput: keystrokes + mouse → activity events
 │   ├── weather.py        # wttr.in poll every 30 min
-│   ├── git_hook.py       # Unix socket server, wakes on git push
+│   ├── ipc_server.py     # Unix socket server: git push + upload events
 │   └── temp.py           # sends TEMP to Pico every 30 min
+├── pico_upload.py        # CLI wrapper: coordinates upload handshake + mpremote
 └── pico_eyes.service     # systemd user unit file
 ```
 
@@ -60,7 +61,8 @@ Plain `dataclass` objects pushed into a `queue.Queue` by producer threads:
 |-------|--------|--------|
 | `KeystrokeEvent` | `timestamp: float` | keyboard.py |
 | `MouseMoveEvent` | `timestamp: float` | keyboard.py |
-| `GitPushEvent` | `branch: str` | git_hook.py |
+| `GitPushEvent` | `branch: str` | ipc_server.py |
+| `UploadRequestEvent` | `conn: socket` | ipc_server.py (carries open conn for ACK) |
 | `WeatherUpdateEvent` | `text: str` | weather.py |
 | `TempRequestEvent` | — | temp.py (fires every 30 min) |
 | `TickEvent` | — | daemon.py (1 Hz timer thread) |
@@ -132,22 +134,24 @@ MSG:28°C ☁ | pico:24°C
 - Main loop receives it, sends `TEMP` to Pico (serial stays on main thread), parses the ACK value, caches it as `_last_temp_celsius`
 - Combined MSG sent only when both `_last_weather_text` and `_last_temp_celsius` are available
 
-**`git_hook.py`**
+**`ipc_server.py`**
 - Opens Unix domain socket at `/tmp/pico_eyes.sock`
 - Blocks on `accept()` waiting for connections
-- Reads branch name from connection, puts `GitPushEvent(branch=branch)` into queue
-- Handles multiple rapid pushes gracefully (each connection processed in sequence)
+- Parses message prefix to determine event type:
+  - `PUSH:<branch>` → puts `GitPushEvent(branch=branch)` into queue, closes connection
+  - `UPLOAD` → puts `UploadRequestEvent(conn=conn)` into queue, **keeps connection open** until daemon sends `OK\n` back
+- Handles git push and pico-upload from the same socket
 
 ---
 
 ### Concurrency model
 
 ```
-[keyboard thread]  ──┐
-[weather thread]   ──┤
-[git_hook thread]  ──┼──► queue.Queue ──► main thread ──► Pico serial
-[tick thread]      ──┤                         │
-[temp thread]      ──┘                    state machine
+[keyboard thread]    ──┐
+[weather thread]     ──┤
+[ipc_server thread]  ──┼──► queue.Queue ──► main thread ──► Pico serial
+[tick thread]        ──┤                         │
+[temp thread]        ──┘                    state machine
 ```
 
 All threads are producers only. The main thread is the sole consumer and sole writer to the serial port. No locks needed — `queue.Queue` is thread-safe by design.
@@ -185,7 +189,7 @@ Global git hook so every repo triggers `FACE:excited` on push.
 ```bash
 #!/bin/sh
 branch=$(git rev-parse --abbrev-ref HEAD)
-echo "$branch" | nc -U /tmp/pico_eyes.sock 2>/dev/null || true
+echo "PUSH:$branch" | nc -U /tmp/pico_eyes.sock 2>/dev/null || true
 ```
 
 **`~/.gitconfig`:**
@@ -210,17 +214,32 @@ Install: `pip install pyserial pynput requests`
 
 ---
 
-## Development workflow (mpremote)
+## pico-upload (`host/pico_upload.py`)
 
-`mpremote` is used only during development to upload code to the Pico. It takes over the serial port, so the daemon must not be running at the same time:
+A CLI wrapper that coordinates a safe upload handshake with the daemon so you never have to manually stop/start it.
 
+**Usage:**
 ```sh
-systemctl --user stop pico_eyes
-mpremote cp main.py :
-systemctl --user start pico_eyes
+python host/pico_upload.py main.py companion.py health.py
+# or install as a shell alias: pico-upload main.py companion.py
 ```
 
-No daemon integration needed — this is a dev-time operation only.
+**Flow:**
+```
+1. pico_upload.py connects to /tmp/pico_eyes.sock, sends "UPLOAD"
+2. Daemon receives UploadRequestEvent:
+   - sends BYE to Pico
+   - closes serial port
+   - writes "OK\n" back through the socket connection
+3. pico_upload.py receives "OK" → runs: mpremote cp <files> :
+4. pico_upload.py exits (socket closes)
+5. Daemon's serial_link.py reconnects automatically (existing logic)
+6. On reconnect → sends FACE:excited for 5 s, then returns to previous face
+```
+
+**Why keep the socket open until "OK":** ensures `mpremote` only starts after the daemon has actually released the port, not just after sending the request. Avoids a race condition on slow systems.
+
+**If daemon is not running:** `nc` fails silently → `pico_upload.py` falls back to running `mpremote` directly without handshake.
 
 ---
 
